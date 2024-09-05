@@ -53,6 +53,12 @@ We want it to look like this: ![tutorial wordpress schema](./docs/images/wordpre
 
 ### Deployments
 
+_All files must be applied using the following command:_
+
+```bash
+kubectl apply -f <yaml_file_path> # (or <directory>)
+```
+
 Let's first create our wordpress pods ! The proper way to deploy pods in kubernetes is by using 
 an object called `Deployments` since they come with a lot of features that are going to be usefull to us
 
