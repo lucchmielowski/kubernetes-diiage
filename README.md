@@ -466,6 +466,242 @@ To make it work we need to delete the existing mysql `Deployment` and `PVC` and 
  kubectl rollout restart deployment wordpress
 ```
 
+### ConfigMaps
+
+While `Secrets` are great for sensitive data like passwords, `ConfigMaps` are perfect for non-sensitive configuration like database hostnames, ports, or application settings.
+
+Let's move our database configuration to a `ConfigMap`:
+
+```yaml
+# configmap.yaml
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: wordpress-config
+  labels:
+    app: wordpress
+data:
+  WORDPRESS_DB_HOST: "wordpress-mysql"
+  WORDPRESS_DB_NAME: "wordpress"
+  WORDPRESS_DB_USER: "root"
+  MYSQL_DATABASE: "wordpress"
+  MYSQL_USER: "wordpress"
+```
+
+Now update our deployments to use the `ConfigMap`:
+
+```yaml
+# wordpress/deployment.yaml
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: wordpress
+  labels:
+    app: wordpress
+spec:
+  selector:
+    matchLabels:
+      app: wordpress
+      tier: frontend
+  strategy:
+    type: Recreate
+  template:
+    metadata:
+      labels:
+        app: wordpress
+        tier: frontend
+    spec:
+      containers:
+        - image: wordpress:4.8-apache
+          name: wordpress
+          envFrom:
+            - configMapRef:
+                name: wordpress-config
+            - secretRef:
+                name: mysql-pass
+          ports:
+            - containerPort: 80
+              name: wordpress
+          volumeMounts:
+            - name: wordpress-persistent-storage
+              mountPath: /var/www/html
+      volumes:
+        - name: wordpress-persistent-storage
+          persistentVolumeClaim:
+            claimName: wp-pv-claim
+```
+
+```yaml
+# mysql/deployment.yaml
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: wordpress-mysql
+  labels:
+    app: wordpress
+spec:
+  selector:
+    matchLabels:
+      app: wordpress
+      tier: mysql
+  strategy:
+    type: Recreate
+  template:
+    metadata:
+      labels:
+        app: wordpress
+        tier: mysql
+    spec:
+      containers:
+        - image: mysql:5.6
+          name: mysql
+          envFrom:
+            - configMapRef:
+                name: wordpress-config
+            - secretRef:
+                name: mysql-pass
+          ports:
+            - containerPort: 3306
+              name: mysql
+          volumeMounts:
+            - name: mysql-persistent-storage
+              mountPath: /var/lib/mysql
+      volumes:
+        - name: mysql-persistent-storage
+          persistentVolumeClaim:
+            claimName: mysql-pv-claim
+```
+
+Apply the changes:
+
+```shell
+kubectl apply -f configmap.yaml
+kubectl apply -f wordpress/deployment.yaml -f mysql/deployment.yaml
+kubectl rollout restart deployment wordpress
+kubectl rollout restart deployment wordpress-mysql
+```
+
+**Benefits of using ConfigMaps:**
+
+- **Centralized configuration**: Change database host in one place, affects all pods
+- **Environment-specific configs**: Different ConfigMaps for dev/staging/prod
+- **Version control**: Configuration changes are tracked in your manifests
+- **Easy updates**: Modify ConfigMap and restart pods to pick up new values
+
+**Alternative ways to use ConfigMaps:**
+
+```yaml
+# Mount as files
+volumeMounts:
+  - name: config-volume
+    mountPath: /etc/config
+volumes:
+  - name: config-volume
+    configMap:
+      name: wordpress-config
+
+# Use individual keys as env vars
+env:
+  - name: WORDPRESS_DB_HOST
+    valueFrom:
+      configMapKeyRef:
+        name: wordpress-config
+        key: WORDPRESS_DB_HOST
+```
+
+### Using a StatefulSet for MySQL
+
+So far we used a `Deployment` for MySQL. For stateful workloads like databases, Kubernetes provides `StatefulSet` which gives:
+
+- Stable network identity: each pod gets a predictable DNS name like `wordpress-mysql-0`.
+- Stable persistent storage: each replica gets its own `PersistentVolume` via `volumeClaimTemplates`.
+- Ordered, graceful rolling updates.
+
+For a single-node MySQL suitable for this tutorial, you can switch to a `StatefulSet` with a headless `Service`:
+
+```yaml
+# mysql/service.yaml (headless service required by StatefulSet)
+apiVersion: v1
+kind: Service
+metadata:
+  name: wordpress-mysql
+  labels:
+    app: wordpress
+spec:
+  clusterIP: None
+  selector:
+    app: wordpress
+    tier: mysql
+  ports:
+    - port: 3306
+      name: mysql
+```
+
+```yaml
+# mysql/statefulset.yaml
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: wordpress-mysql
+  labels:
+    app: wordpress
+spec:
+  serviceName: wordpress-mysql
+  replicas: 1
+  selector:
+    matchLabels:
+      app: wordpress
+      tier: mysql
+  updateStrategy:
+    type: RollingUpdate
+  template:
+    metadata:
+      labels:
+        app: wordpress
+        tier: mysql
+    spec:
+      securityContext:
+        fsGroup: 999
+      containers:
+        - name: mysql
+          image: mysql:5.6
+          env:
+            - name: MYSQL_ROOT_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: mysql-pass
+                  key: password
+          ports:
+            - containerPort: 3306
+              name: mysql
+          volumeMounts:
+            - name: data
+              mountPath: /var/lib/mysql
+  volumeClaimTemplates:
+    - metadata:
+        name: data
+        labels:
+          app: wordpress
+      spec:
+        accessModes: ["ReadWriteOnce"]
+        resources:
+          requests:
+            storage: 20Gi
+```
+
+Notes:
+
+- The `serviceName` in the `StatefulSet` must match the headless `Service` name.
+- Keep `replicas: 1` unless you implement proper MySQL replication (beyond this tutorialâ€™s scope).
+- Update the WordPress DB host to the service DNS (`wordpress-mysql`) or the specific pod (`wordpress-mysql-0.wordpress-mysql`) if needed.
+
+Apply it like this:
+
+```shell
+kubectl delete deploy wordpress-mysql || true
+kubectl apply -f mysql/service.yaml -f mysql/statefulset.yaml
+```
+
 ### Ingress
 
 Congratz our application is now working ! One last thing though, is that it's not accessible from outside of the kubernetes cluster,
@@ -508,14 +744,144 @@ You should now be able to access your application from outside the cluster ! ðŸŽ
 
 ![congratulations](https://media.giphy.com/media/jJQC2puVZpTMO4vUs0/giphy.gif)
 
+### Helm: create a chart and add MySQL as a dependency
 
-## Other things this tutorial did not show
+Helm lets you templatize and version your manifests. We'll create a tiny chart for WordPress and pull in MySQL from a maintained chart.
 
-I voluntarily kept some notions out of this tutorial to keep it dead simple, but there are some must-haves resources to 
-know when working with kube:
+Prereqs: install Helm from the official docs.
 
-- `Statefulsets` are used fox`r stateful applications such as databases that have specific needs (boot order, 1 volume per pod, ...)
-- `LoadBalancer services` (can be used to expose an application without using and additional ingress controller)
-- `ConfigMap`, like secrets they store configuration but configmaps don't cypher the content (eg: useful to store config files)
-- `ReplicaSets` are what allowing you to create more pods in parallel, they can be configured through a `Deployment` by specifying a `replicas: <number>`
-- `HorizontalPodAutoscaler`: allows your pods to scale up or down depending on their usages
+```shell
+brew install helm # macOS
+```
+
+Create a chart skeleton:
+
+```shell
+helm create wp
+```
+
+This creates a `wp/` directory. We will: (1) add Bitnami MySQL as a dependency, and (2) keep a minimal WordPress `Deployment` and `Service` template using values.
+
+Add MySQL dependency:
+
+```yaml
+# wp/Chart.yaml
+apiVersion: v2
+name: wp
+description: WordPress with MySQL (Bitnami) demo
+type: application
+version: 0.1.0
+appVersion: "1.0.0"
+dependencies:
+  - name: mysql
+    version: 9.x.x
+    repository: https://charts.bitnami.com/bitnami
+```
+
+Configure values for both WordPress and MySQL:
+
+```yaml
+# wp/values.yaml
+namespace: wordpress
+
+wordpress:
+  image: wordpress:4.8-apache
+  service:
+    type: ClusterIP
+    port: 80
+  resources:
+    requests:
+      cpu: 100m
+      memory: 256Mi
+    limits:
+      cpu: 500m
+      memory: 512Mi
+  db:
+    host: "{{ .Release.Name }}-mysql" # service name created by the dependency
+    passwordSecretName: mysql-pass # optional if you want to reuse an existing secret
+
+mysql:
+  auth:
+    rootPassword: "MY_PASSWORD_123" # for demo; use secrets in real setups
+    database: wordpress
+    username: wp_user
+    password: wp_password
+  primary:
+    persistence:
+      enabled: true
+      size: 20Gi
+```
+
+Create minimal WordPress templates using the values above (example skeletons):
+
+```yaml
+# wp/templates/wordpress-deployment.yaml
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "wp.fullname" . }}
+  labels:
+    app.kubernetes.io/name: {{ include "wp.name" . }}
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: {{ include "wp.name" . }}
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: {{ include "wp.name" . }}
+    spec:
+      containers:
+        - name: wordpress
+          image: {{ .Values.wordpress.image }}
+          ports:
+            - containerPort: 80
+          env:
+            - name: WORDPRESS_DB_HOST
+              value: {{ .Values.wordpress.db.host | quote }}
+            - name: WORDPRESS_DB_PASSWORD
+              value: {{ .Values.mysql.auth.password | default .Values.mysql.auth.rootPassword | quote }}
+          resources: {{- toYaml .Values.wordpress.resources | nindent 12 }}
+```
+
+```yaml
+# wp/templates/wordpress-service.yaml
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ include "wp.fullname" . }}
+spec:
+  type: {{ .Values.wordpress.service.type }}
+  selector:
+    app.kubernetes.io/name: {{ include "wp.name" . }}
+  ports:
+    - port: {{ .Values.wordpress.service.port }}
+      targetPort: 80
+```
+
+Vendor dependencies and install:
+
+```shell
+helm repo add bitnami https://charts.bitnami.com/bitnami
+helm dependency update wp
+helm install wp ./wp -n wordpress --create-namespace
+```
+
+Upgrade with new values (e.g., change WordPress image):
+
+```shell
+helm upgrade wp ./wp -n wordpress -f wp/values.yaml
+```
+
+Uninstall and cleanup:
+
+```shell
+helm uninstall wp -n wordpress
+```
+
+Notes:
+
+- The Bitnami MySQL chart creates a Service named `RELEASE-NAME-mysql` by default, hence `WORDPRESS_DB_HOST` uses `{{ .Release.Name }}-mysql`.
+- For production, avoid plain-text passwords; consider External Secrets/Sealed Secrets and set `mysql.auth.existingSecret`.
+- You can add an Ingress template to the chart, or reuse the earlier `Ingress` manifest with `ingressClassName: nginx`.
