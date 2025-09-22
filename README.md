@@ -349,8 +349,6 @@ spec:
     matchLabels:
       app: wordpress
       tier: mysql
-  strategy:
-    type: Recreate
   template:
     metadata:
       labels:
@@ -358,15 +356,24 @@ spec:
         tier: mysql
     spec:
       containers:
-        - image: mysql:5.6
+        - image: mysql:8.0
           name: mysql
           env:
-            - name: MYSQL_ROOT_PASSWORD
+            - name: MYSQL_DATABASE
+              value: wordpressdb
+            - name: MYSQL_USER
+              value: wordpress
+            - name: MYSQL_PASSWORD
               value: password123
+            - name: MYSQL_RANDOM_ROOT_PASSWORD
+              value: "1"
+          args:
+            - --character-set-server=utf8mb4
+            - --collation-server=utf8mb4_unicode_ci
+            - --bind-address=0.0.0.0
           ports:
             - containerPort: 3306
               name: mysql
-          # NEW
           volumeMounts:
             - name: mysql-persistent-storage # Must match the name of a volume in volumes
               mountPath: /var/lib/mysql
@@ -392,8 +399,6 @@ spec:
     matchLabels:
       app: wordpress
       tier: frontend
-  strategy:
-    type: Recreate
   template:
     metadata:
       labels:
@@ -401,13 +406,17 @@ spec:
         tier: frontend
     spec:
       containers:
-        - image: wordpress:4.8-apache
+        - image: wordpress:latest
           name: wordpress
           env:
             - name: WORDPRESS_DB_HOST
               value: wordpress-mysql
+            - name: WORDPRESS_DB_USER
+              value: wordpress
             - name: WORDPRESS_DB_PASSWORD
               value: password123
+            - name: WORDPRESS_DB_NAME
+              value: wordpressdb
           ports:
             - containerPort: 80
               name: wordpress
@@ -420,10 +429,7 @@ spec:
             claimName: wp-pv-claim
 ```
 
-and re-apply your config by doing: 
-```shell
-kubectl apply -f mysql/deployment.yaml -f wordpress/deployment.yaml
-```
+and re-apply your config
 
 Your volumes should now be in `Bound` state and your pods `Running`
 
@@ -451,7 +457,7 @@ We can create the secret with kubectl and, as we did with our volumes, bind it i
 
 ```shell
 # Create a secret with a new password
-kubectl create secret generic mysql-pass --from-literal=password='MY_PASSWORD_123'
+kubectl create secret generic mysql-pass --from-literal=password='password234'
 ```
 
 ```yaml
@@ -467,8 +473,6 @@ spec:
     matchLabels:
       app: wordpress
       tier: mysql
-  strategy:
-    type: Recreate
   template:
     metadata:
       labels:
@@ -476,24 +480,34 @@ spec:
         tier: mysql
     spec:
       containers:
-        - image: mysql:5.6
+        - image: mysql:8.0
           name: mysql
           env:
-            - name: MYSQL_ROOT_PASSWORD
-              # NEW
+            - name: MYSQL_DATABASE
+              value: wordpressdb
+            - name: MYSQL_USER
+              value: wordpress
+            - name: MYSQL_PASSWORD
               valueFrom:
                 secretKeyRef:
-                  key: password # matches on of the key inside our secret  
-                  name: mysql-pass # matches the metadata.name of our secret
+                  key: password
+                  name: mysql-pass
+            - name: MYSQL_RANDOM_ROOT_PASSWORD
+              value: "1"
+          args:
+            - --character-set-server=utf8mb4
+            - --collation-server=utf8mb4_unicode_ci
+            - --bind-address=0.0.0.0
           ports:
             - containerPort: 3306
               name: mysql
           volumeMounts:
-            - name: mysql-persistent-storage
+            - name: mysql-persistent-storage # Must match the name of a volume in volumes
               mountPath: /var/lib/mysql
       volumes:
         - name: mysql-persistent-storage
           persistentVolumeClaim:
+            # Name of the pvc created in pvc.yaml
             claimName: mysql-pv-claim
 ```
 
@@ -509,8 +523,6 @@ spec:
     matchLabels:
       app: wordpress
       tier: frontend
-  strategy:
-    type: Recreate
   template:
     metadata:
       labels:
@@ -518,22 +530,26 @@ spec:
         tier: frontend
     spec:
       containers:
-        - image: wordpress:4.8-apache
+        - image: wordpress:latest
           name: wordpress
           env:
             - name: WORDPRESS_DB_HOST
               value: wordpress-mysql
+            - name: WORDPRESS_DB_USER
+              value: wordpress
             - name: WORDPRESS_DB_PASSWORD
               valueFrom:
                 secretKeyRef:
                   key: password
                   name: mysql-pass
+            - name: WORDPRESS_DB_NAME
+              value: wordpressdb
           ports:
             - containerPort: 80
               name: wordpress
           volumeMounts:
             - name: wordpress-persistent-storage
-              mountPath: /var/www/html
+              mountPath: /var/www/html # Different path
       volumes:
         - name: wordpress-persistent-storage
           persistentVolumeClaim:
@@ -610,21 +626,22 @@ spec:
               key: password
         - name: MYSQL_DATABASE
           value: wordpress
+        # REMOVED ARGS, BECAUSE SETUP IS DONE VIA THE CONFIG FILE
         ports:
         - containerPort: 3306
           name: mysql
-        # ADDED
         volumeMounts:
         - name: mysql-persistent-storage
           mountPath: /var/lib/mysql
+        # NEW
         - name: mysql-config
           mountPath: /etc/mysql/conf.d/my.cnf
           subPath: my.cnf
-      # ADDED
       volumes:
       - name: mysql-persistent-storage
         persistentVolumeClaim:
           claimName: mysql-pv-claim
+      # NEW
       - name: mysql-config
         configMap:
           name: mysql-config
@@ -717,23 +734,34 @@ spec:
         app: wordpress
         tier: mysql
     spec:
-      securityContext:
-        fsGroup: 999
       containers:
         - name: mysql
-          image: mysql:5.6
+          image: mysql:8.0
           env:
-            - name: MYSQL_ROOT_PASSWORD
+            - name: MYSQL_DATABASE
+              value: wordpressdb
+            - name: MYSQL_USER
+              value: wordpress
+            - name: MYSQL_PASSWORD
               valueFrom:
                 secretKeyRef:
-                  name: mysql-pass
                   key: password
+                  name: mysql-pass
+            - name: MYSQL_RANDOM_ROOT_PASSWORD
+              value: "1"
           ports:
             - containerPort: 3306
               name: mysql
           volumeMounts:
             - name: data
               mountPath: /var/lib/mysql
+            - name: mysql-config
+              mountPath: /etc/mysql/conf.d/my.cnf
+              subPath: my.cnf
+      volumes:
+        - name: mysql-config
+          configMap:
+            name: mysql-config
   volumeClaimTemplates:
     - metadata:
         name: data
@@ -771,7 +799,7 @@ This is done by using an `Ingress` object. Ingresses are pods running in your cl
 Ingresses controllers (the tool that's handling ingresses creation) are `addons` that need to be added to a cluster by the operators, we have to install one first ! The most common one is 
 `NGINX` (but [a lot of solutions](https://kubernetes.io/docs/concepts/services-networking/ingress-controllers/) exists )
 
-```shell
+```sh
 # Install the NGINX ingress controller
 kubectl apply -f https://raw.githubusercontent.com/kubernetes/ingress-nginx/main/deploy/static/provider/kind/deploy.yaml
 ```
@@ -839,10 +867,8 @@ Configure values for both WordPress and MySQL:
 
 ```yaml
 # wp/values.yaml
-namespace: wordpress
-
 wordpress:
-  image: wordpress:4.8-apache
+  image: wordpress:latest
   service:
     type: ClusterIP
     port: 80
@@ -854,15 +880,18 @@ wordpress:
       cpu: 500m
       memory: 512Mi
   db:
-    host: "{{ .Release.Name }}-mysql" # service name created by the dependency
-    passwordSecretName: mysql-pass # optional if you want to reuse an existing secret
+    host: wordpress-mysql
+    user: wordpress
+    password: password123
+    name: wordpressdb
+    passwordSecretName: mysql-pass
 
 mysql:
   auth:
-    rootPassword: "MY_PASSWORD_123" # for demo; use secrets in real setups
-    database: wordpress
-    username: wp_user
-    password: wp_password
+    rootPassword: password123
+    database: wordpressdb
+    username: wordpress
+    password: password123
   primary:
     persistence:
       enabled: true
@@ -872,7 +901,7 @@ mysql:
 Create minimal WordPress templates using the values above (example skeletons):
 
 ```yaml
-# wp/templates/wordpress-deployment.yaml
+# wp/templates/deployment.yaml
 apiVersion: apps/v1
 kind: Deployment
 metadata:
@@ -880,7 +909,6 @@ metadata:
   labels:
     app.kubernetes.io/name: {{ include "wp.name" . }}
 spec:
-  replicas: 1
   selector:
     matchLabels:
       app.kubernetes.io/name: {{ include "wp.name" . }}
@@ -891,19 +919,48 @@ spec:
     spec:
       containers:
         - name: wordpress
-          image: {{ .Values.wordpress.image }}
-          ports:
-            - containerPort: 80
+          image: {{ .Values.wordpress.image | quote }}
           env:
             - name: WORDPRESS_DB_HOST
               value: {{ .Values.wordpress.db.host | quote }}
+            - name: WORDPRESS_DB_USER
+              value: {{ .Values.mysql.auth.username | quote }}
             - name: WORDPRESS_DB_PASSWORD
-              value: {{ .Values.mysql.auth.password | default .Values.mysql.auth.rootPassword | quote }}
-          resources: {{- toYaml .Values.wordpress.resources | nindent 12 }}
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.wordpress.db.passwordSecretName | quote }}
+                  key: password
+            - name: WORDPRESS_DB_NAME
+              value: {{ .Values.mysql.auth.database | quote }}
+          ports:
+            - containerPort: 80
+              name: wordpress
+          volumeMounts:
+            - name: wordpress-persistent-storage
+              mountPath: /var/www/html
+      volumes:
+        - name: wordpress-persistent-storage
+          persistentVolumeClaim:
+            claimName: wp-pv-claim
 ```
 
 ```yaml
-# wp/templates/wordpress-service.yaml
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: {{ .Values.wordpress.persistence.existingClaim | default "wp-pv-claim" | quote }}
+  labels:
+    app.kubernetes.io/name: {{ include "wp.name" . }}
+spec:
+  accessModes:
+    - {{ .Values.wordpress.persistence.accessMode | default "ReadWriteOnce" | quote }}
+  resources:
+    requests:
+      storage: {{ .Values.wordpress.persistence.size | default "20Gi" | quote }}
+```
+
+```yaml
+# wp/templates/service.yaml
 apiVersion: v1
 kind: Service
 metadata:
@@ -916,6 +973,33 @@ spec:
     - port: {{ .Values.wordpress.service.port }}
       targetPort: 80
 ```
+
+```yaml
+# wp/templates/ingress.yaml
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: {{ include "wp.fullname" . }}-ingress
+  labels:
+    app.kubernetes.io/name: {{ include "wp.name" . }}
+spec:
+  {{- if .Values.ingress.ingressClassName }}
+  ingressClassName: {{ .Values.ingress.ingressClassName | quote }}
+  {{- end }}
+  rules:
+    - host: {{ .Values.ingress.host | quote }}
+      http:
+        paths:
+          - path: {{ .Values.ingress.path | default "/" | quote }}
+            pathType: {{ .Values.ingress.pathType | default "Prefix" | quote }}
+            backend:
+              service:
+                name: {{ include "wp.fullname" . }}
+                port:
+                  number: {{ .Values.wordpress.service.port }}
+```
+
+
 
 Vendor dependencies and install:
 
