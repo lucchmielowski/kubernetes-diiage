@@ -127,8 +127,12 @@ spec:
           env:
             - name: WORDPRESS_DB_HOST
               value: wordpress-mysql
+            - name: WORDPRESS_DB_USER
+              value: wordpress
             - name: WORDPRESS_DB_PASSWORD
               value: password123
+            - name: WORDPRESS_DB_NAME
+              value: wordpressdb
           ports:
             - containerPort: 80
               name: wordpress
@@ -155,14 +159,21 @@ spec:
         tier: mysql
     spec:
       containers:
-        - image: mysql:9
+        - image: mysql:8.0
           name: mysql
           env:
-            - name: MYSQL_ROOT_PASSWORD
+            - name: MYSQL_DATABASE
+              value: wordpressdb
+            - name: MYSQL_USER
+              value: wordpress
+            - name: MYSQL_PASSWORD
               value: password123
+            - name: MYSQL_RANDOM_ROOT_PASSWORD
+              value: "1"
           args:
             - --character-set-server=utf8mb4
             - --collation-server=utf8mb4_unicode_ci
+            - --bind-address=0.0.0.0
           ports:
             - containerPort: 3306
               name: mysql
@@ -351,7 +362,7 @@ spec:
           name: mysql
           env:
             - name: MYSQL_ROOT_PASSWORD
-              value: toto123
+              value: password123
           ports:
             - containerPort: 3306
               name: mysql
@@ -396,7 +407,7 @@ spec:
             - name: WORDPRESS_DB_HOST
               value: wordpress-mysql
             - name: WORDPRESS_DB_PASSWORD
-              value: toto123
+              value: password123
           ports:
             - containerPort: 80
               name: wordpress
@@ -424,14 +435,14 @@ should have been persisted and you should be able to see your config even when t
 
 Now that the app works, we start working on improving our application. First step is to improve security !
 
-You've probably noticed that we're passing a string `toto123` in clear text for both the `wordpress` and `mysql`. 
+You've probably noticed that we're passing a string `password123` in clear text for both the `wordpress` and `mysql`. 
 This creates 2 issues:
 - First, you have a password in clear-text in the code
 - Second, your password is not shared by applications, if the mysql operator decides to change the DB password he'll 
 have to change it everywhere by hand !
 
 To avoid both issues, kubernetes has a `Secret` object that store a list of keys of your choice and that can either be 
-mounted or used as an environment variable. We're going to do the latter and replace our toto123 value by a shared secret !
+mounted or used as an environment variable. We're going to do the latter and replace our password123 value by a shared secret !
 
 In kubernetes, secrets are by default using a `base64` encoding to make sure the value is not in clear-text (not the most secure way of doing things though)
 ``
