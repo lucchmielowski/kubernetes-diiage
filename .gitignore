@@ -1,3 +1,5 @@
 .idea
 mysql/
 wordpress/
+wp/*
+manifests/*

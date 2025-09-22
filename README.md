@@ -1,9 +1,45 @@
 # DIIAGE kubernetes course
 
-## Installing the kind cluster
+## Installing the local cluster
 
-To follow this example you'll need a kubernetes cluster. You can create create one using `kind` ([how to install](https://kind.sigs.k8s.io/docs/user/quick-start/))
-You'll also need to install the [kubectl CLI](https://kubernetes.io/docs/tasks/tools/) for your distribution
+To follow this example you'll need a kubernetes cluster. You'll need to install the [kubectl CLI](https://kubernetes.io/docs/tasks/tools/) for your distribution.
+
+### Using minikube
+
+Follow the [official minikube installation guide](https://minikube.sigs.k8s.io/docs/start/) for your operating system.
+
+You can start a cluster with the following command:
+```shell
+minikube start --driver=docker
+```
+> You can use another driver (like `virtualbox` or `hyperkit`) if you prefer. See `minikube start --help` for options.
+
+3. **Check your cluster status**
+   ```shell
+   minikube status
+   ```
+
+4. **Set your kubectl context (if needed)**
+   ```shell
+   kubectl config use-context minikube
+   ```
+
+5. **Access services**
+   - To access a service (like WordPress) from your browser, you can use:
+     ```shell
+     minikube service <service-name>
+     ```
+   - Or, to get the cluster IP:
+     ```shell
+     minikube ip
+     ```
+
+**Note:**  
+If you use `minikube`, you do **not** need to run the `kind` commands below. Just use `minikube` for your cluster management.
+
+
+### Using Kind
+You can create a cluster inside docker using `kind` ([how to install](https://kind.sigs.k8s.io/docs/user/quick-start/))
 
 Once the CLI installed, you can create the cluster by running the following command :
 
@@ -34,8 +70,11 @@ kubectl get pods
 # Create a pod nginx
 kubectl run nginx --image=nginx:latest
 
-# Execute an ls command on the nginx pod created previously
+# Debug using an ls command on the nginx pod created previously
 kubectl exec -it nginx -- ls /
+
+# Debug by launching another busybox ephemeral container in the pod (best practice)
+kubectl debug -it nginx --profile=general --image=busybox
 
 # Get all machines from the kubernetes cluster
 kubectl get nodes
@@ -83,13 +122,13 @@ spec:
         tier: frontend
     spec:
       containers:
-        - image: wordpress:4.8-apache
+        - image: wordpress:latest
           name: wordpress
           env:
             - name: WORDPRESS_DB_HOST
               value: wordpress-mysql
             - name: WORDPRESS_DB_PASSWORD
-              value: toto123
+              value: password123
           ports:
             - containerPort: 80
               name: wordpress
@@ -116,11 +155,14 @@ spec:
         tier: mysql
     spec:
       containers:
-        - image: mysql:5.6
+        - image: mysql:9
           name: mysql
           env:
             - name: MYSQL_ROOT_PASSWORD
-              value: toto123
+              value: password123
+          args:
+            - --character-set-server=utf8mb4
+            - --collation-server=utf8mb4_unicode_ci
           ports:
             - containerPort: 3306
               name: mysql
@@ -133,10 +175,21 @@ You can see that both pods are created but only the mysql is staying "up".
 The wordpress is restarting and should probably be in `CrashLoopBackOff` state (meaning it's failing and restarting in a loop).
 Why's that ? 
 
-*Because the wordpress pod cannot access the db pod !*
+Let's monitor our container by running the following commands:
 
-Because of it's highly distributed nature, kubernetes forces us to use a network abstraction called `Service` to make 
-containers talk together. (Otherwise we'd have to deal with the ever-changing IP address of the pods 
+```sh
+kubectl describe pod -l app=wordpress
+# No error event
+
+kubectl logs -l app=wordpress 
+# Fails with php_network_getaddresses: getaddrinfo failed: Name or service not known in
+```
+
+
+We now know it fails because *The wordpress pod cannot access the db pod* ! 
+
+Because of it's highly distributed nature, kubernetes forces us to use a network abstraction called `Service` to make
+containers talk to each other. (Otherwise we'd have to deal with the ever-changing IP address of the pods 
 to be able to connect to them !)
 
 Let's create 2 services then
@@ -175,11 +228,29 @@ spec:
 
 ```
 
-Note: services are using `selector` to match a pod / list of pods and know where to re-route the
-traffic to. So you should make sure that the service's `selector` matches some of your pods' `labels`.
+Let's look at the `Endpoint` resource in kubernetes and compare it to the `Pods` 
+
+```sh
+kubectl get endpointslice -l app=wordpress
+# wordpress-6ztx4         IPv4          80      10.244.2.4   5m12s
+# wordpress-mysql-wntjm   IPv4          3306    10.244.1.3   5m21s
+
+kubectl get pods -o wide -l app=wordpress
+# wordpress-69bf5655-nnlq6          ...   10.244.2.4 ...
+# wordpress-mysql-5b5944747-bntjw   ...   10.244.1.3 ...
+
+kubectl get services -l app=wordpress
+# wordpress         ClusterIP   10.96.152.21   <none>        80/TCP     6m58s
+# wordpress-mysql   ClusterIP   None           <none>        3306/TCP   7m7s
+```
+
+In Kubernetes, a `Service` acts like a stable doorway that lets other parts of your app talk to your `Pods`, even if those `Pods` are constantly changing. Behind the scenes, Kubernetes keeps track of which `Pods` are connected to a `Service` using something called an `EndpointSlice`. You can think of an `EndpointSlice` as a list of the current addresses of all the `Pods` that belong to a `Service`. Whenever `Pods` are added or removed, the `EndpointSlice` is updated automatically, so the `Service` always knows where to send the traffic.
 
 
-At this point your `wordpress` pods should be able to discuss together ! 
+
+> Note: services are using `selector` to match a pod / list of pods and know where to re-route the traffic to. So you should make sure that the service's `selector` matches some of your pods' `labels`.
+
+At this point your `wordpress` and `mysql` pods should be able to discuss together ! 
 
 To test that it works you can connect to the `wordpress` pods on the port 80 (pod that we're publishing in the deployment)
 with the following command: 
@@ -187,6 +258,7 @@ with the following command:
 ```shell
 # List pods and find the one called wordpress-<some_id>
 kubectl get pods
+
 # Forwards port 80 of the container to your localhost:9090
 kubectl port-forward wordpress-<some_id> 9090:80
 ```
@@ -477,64 +549,28 @@ Let's move our database configuration to a `ConfigMap`:
 apiVersion: v1
 kind: ConfigMap
 metadata:
-  name: wordpress-config
-  labels:
-    app: wordpress
+  name: mysql-config
 data:
-  WORDPRESS_DB_HOST: "wordpress-mysql"
-  WORDPRESS_DB_NAME: "wordpress"
-  WORDPRESS_DB_USER: "root"
-  MYSQL_DATABASE: "wordpress"
-  MYSQL_USER: "wordpress"
+  mysql.cnf: |
+    [mysqld]
+    # Character Set
+    character-set-server=utf8mb4
+    collation-server=utf8mb4_unicode_ci
+    init-connect='SET NAMES utf8mb4'
+    
+    [mysql]
+    default-character-set=utf8mb4
+    
+    [client]
+    default-character-set=utf8mb4
 ```
 
 Now update our deployments to use the `ConfigMap`:
 
 ```yaml
-# wordpress/deployment.yaml
+# mysql/deployment.yaml or mysql/statefulset.yaml
 apiVersion: apps/v1
-kind: Deployment
-metadata:
-  name: wordpress
-  labels:
-    app: wordpress
-spec:
-  selector:
-    matchLabels:
-      app: wordpress
-      tier: frontend
-  strategy:
-    type: Recreate
-  template:
-    metadata:
-      labels:
-        app: wordpress
-        tier: frontend
-    spec:
-      containers:
-        - image: wordpress:4.8-apache
-          name: wordpress
-          envFrom:
-            - configMapRef:
-                name: wordpress-config
-            - secretRef:
-                name: mysql-pass
-          ports:
-            - containerPort: 80
-              name: wordpress
-          volumeMounts:
-            - name: wordpress-persistent-storage
-              mountPath: /var/www/html
-      volumes:
-        - name: wordpress-persistent-storage
-          persistentVolumeClaim:
-            claimName: wp-pv-claim
-```
-
-```yaml
-# mysql/deployment.yaml
-apiVersion: apps/v1
-kind: Deployment
+kind: Deployment  # or StatefulSet
 metadata:
   name: wordpress-mysql
   labels:
@@ -553,31 +589,41 @@ spec:
         tier: mysql
     spec:
       containers:
-        - image: mysql:5.6
+      - image: mysql:8.0
+        name: mysql
+        env:
+        - name: MYSQL_ROOT_PASSWORD
+          valueFrom:
+            secretKeyRef:
+              name: mysql-pass
+              key: password
+        - name: MYSQL_DATABASE
+          value: wordpress
+        ports:
+        - containerPort: 3306
           name: mysql
-          envFrom:
-            - configMapRef:
-                name: wordpress-config
-            - secretRef:
-                name: mysql-pass
-          ports:
-            - containerPort: 3306
-              name: mysql
-          volumeMounts:
-            - name: mysql-persistent-storage
-              mountPath: /var/lib/mysql
-      volumes:
+        # ADDED
+        volumeMounts:
         - name: mysql-persistent-storage
-          persistentVolumeClaim:
-            claimName: mysql-pv-claim
+          mountPath: /var/lib/mysql
+        - name: mysql-config
+          mountPath: /etc/mysql/conf.d/my.cnf
+          subPath: my.cnf
+      # ADDED
+      volumes:
+      - name: mysql-persistent-storage
+        persistentVolumeClaim:
+          claimName: mysql-pv-claim
+      - name: mysql-config
+        configMap:
+          name: mysql-config
 ```
 
 Apply the changes:
 
 ```shell
 kubectl apply -f configmap.yaml
-kubectl apply -f wordpress/deployment.yaml -f mysql/deployment.yaml
-kubectl rollout restart deployment wordpress
+kubectl apply -f mysql-deployment.yaml
 kubectl rollout restart deployment wordpress-mysql
 ```
 
