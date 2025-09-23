@@ -1,0 +1,11 @@
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ include "wp.fullname" . }}
+spec:
+  type: {{ .Values.wordpress.service.type }}
+  selector:
+    app.kubernetes.io/name: {{ include "wp.name" . }}
+  ports:
+    - port: {{ .Values.wordpress.service.port }}
+      targetPort: 80

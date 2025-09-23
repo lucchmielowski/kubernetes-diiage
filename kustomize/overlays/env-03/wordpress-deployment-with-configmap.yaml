@@ -1,0 +1,49 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: wordpress-mysql
+  labels:
+    app: wordpress
+spec:
+  selector:
+    matchLabels:
+      app: wordpress
+      tier: mysql
+  template:
+    metadata:
+      labels:
+        app: wordpress
+        tier: mysql
+    spec:
+      containers:
+        - image: mysql:8.0
+          name: mysql
+          env:
+            - name: MYSQL_DATABASE
+              value: wordpressdb
+            - name: MYSQL_USER
+              value: wordpress
+            - name: MYSQL_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  key: password
+                  name: mysql-pass
+            - name: MYSQL_RANDOM_ROOT_PASSWORD
+              value: "1"
+          ports:
+            - containerPort: 3306
+              name: mysql
+          volumeMounts:
+            - name: mysql-persistent-storage # Must match the name of a volume in volumes
+              mountPath: /var/lib/mysql
+            - name: mysql-config
+              mountPath: /etc/mysql/conf.d/my.cnf
+              subPath: my.cnf
+      volumes:
+        - name: mysql-persistent-storage
+          persistentVolumeClaim:
+            # Name of the pvc created in pvc.yaml
+            claimName: mysql-pv-claim
+        - name: mysql-config
+          configMap:
+            name: mysql-config

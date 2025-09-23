@@ -1,0 +1,12 @@
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: {{ .Values.wordpress.persistence.existingClaim | default "wp-pv-claim" | quote }}
+  labels:
+    app.kubernetes.io/name: {{ include "wp.name" . }}
+spec:
+  accessModes:
+    - {{ .Values.wordpress.persistence.accessMode | default "ReadWriteOnce" | quote }}
+  resources:
+    requests:
+      storage: {{ .Values.wordpress.persistence.size | default "20Gi" | quote }}

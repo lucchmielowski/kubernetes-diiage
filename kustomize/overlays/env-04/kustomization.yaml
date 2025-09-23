@@ -1,0 +1,25 @@
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+
+metadata:
+  name: wordpress-env-04
+
+resources:
+  - ../../base
+
+patches:
+  - target:
+      kind: StatefulSet
+    path: mysql-statefulset.yaml
+  - target:
+      kind: Service
+      name: wordpress
+    path: mysql-headless-service.yaml
+
+namespace: wordpress-04
+
+namePrefix: env-04-
+
+labels:
+  - pairs:
+      environment: env-04

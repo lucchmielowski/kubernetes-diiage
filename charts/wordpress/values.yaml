@@ -1,0 +1,31 @@
+ingress:
+  enabled: true
+  host: wordpress.example.com
+  path: /
+  pathType: Prefix
+  ingressClassName: nginx
+
+wordpress:
+  image: wordpress:latest
+  service:
+    type: ClusterIP
+    port: 80
+  db:
+    host: wordpress-mysql
+    user: wordpress
+    password: password123
+  persistence:
+    existingClaim: wp-pv-claim
+    accessMode: ReadWriteOnce
+    size: 20Gi
+
+mysql:
+  auth:
+    rootPassword: password123
+    database: wordpressdb
+    username: wordpress
+    password: password123
+  primary:
+    persistence:
+      enabled: true
+      size: 20Gi

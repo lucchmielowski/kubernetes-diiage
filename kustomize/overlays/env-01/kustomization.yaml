@@ -1,0 +1,22 @@
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+
+metadata:
+  name: wordpress-env-01
+
+resources:
+  - ../../base
+
+patches:
+  - target:
+      kind: Deployment
+      name: wordpress
+    path: wordpress-deployment-with-volumes.yaml
+
+namespace: wordpress-01
+
+namePrefix: env-01-
+
+labels:
+  - pairs:
+      environment: env-01

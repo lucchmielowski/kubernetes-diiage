@@ -1,0 +1,40 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "wp.fullname" . }}
+  labels:
+    app.kubernetes.io/name: {{ include "wp.name" . }}
+spec:
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: {{ include "wp.name" . }}
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: {{ include "wp.name" . }}
+    spec:
+      containers:
+        - name: wordpress
+          image: {{ .Values.wordpress.image | quote }}
+          env:
+            - name: WORDPRESS_DB_HOST
+              value: {{ .Values.wordpress.db.host | quote }}
+            - name: WORDPRESS_DB_USER
+              value: {{ .Values.mysql.auth.username | quote }}
+            - name: WORDPRESS_DB_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: {{ include "wp.fullname" . }}-mysql
+                  key: mysql-password
+            - name: WORDPRESS_DB_NAME
+              value: {{ .Values.mysql.auth.database | quote }}
+          ports:
+            - containerPort: 80
+              name: wordpress
+          volumeMounts:
+            - name: wordpress-persistent-storage
+              mountPath: /var/www/html
+      volumes:
+        - name: wordpress-persistent-storage
+          persistentVolumeClaim:
+            claimName: wp-pv-claim
