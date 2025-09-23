@@ -834,7 +834,7 @@ You should now be able to access your application from outside the cluster ! ðŸŽ
 
 ![congratulations](https://media.giphy.com/media/jJQC2puVZpTMO4vUs0/giphy.gif)
 
-### BONUS: Helm: create a chart and add MySQL as a dependency
+### [BONUS] Helm: create a chart and add MySQL as a dependency
 
 Helm is like the "npm" or "brew" for Kubernetes: it lets you package, reuse, and share your app configs as charts. Instead of copy-pasting and tweaking raw YAML, you can use Helm to manage versions, dependencies, and configuration in a much cleaner wayâ€”super handy as things get more complex!
 
