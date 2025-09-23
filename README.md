@@ -104,6 +104,7 @@ an object called `Deployments` since they come with a lot of features that are g
 Let's create our first one in `wordpress/deployment.yaml`
 
 ```yaml
+# wordpress-deployment.yaml
 apiVersion: apps/v1
 kind: Deployment
 metadata:
@@ -141,6 +142,7 @@ spec:
 We'll need to create the mysql one as well inside `mysql/deployment.yaml`
 
 ```yaml
+# mysql-deployment.yaml
 apiVersion: apps/v1
 kind: Deployment
 metadata:
@@ -206,6 +208,7 @@ to be able to connect to them !)
 Let's create 2 services then
 
 ```yaml
+# mysql-service.yaml
 # First one to make the DB available
 apiVersion: v1
 kind: Service
@@ -223,6 +226,7 @@ spec:
 ```
 
 ```yaml
+# wordpress-service.yaml
 # Another one for wordpress, since we want to access it as well
 apiVersion: v1
 kind: Service
@@ -302,6 +306,7 @@ to store data and that will never disapear even when a pod restarts !
 Since we want to save or data in both the DB and wordpress (images, ...) Let's create 2 PVC:
 
 ```yaml
+# wordpress-volume-claim.yaml
 # PVC for wordpress pods, notice the storage request ?
 apiVersion: v1
 kind: PersistentVolumeClaim
@@ -318,6 +323,7 @@ spec:
 ```
 
 ```yaml
+# mysql-volume-claim.yaml
 # Same thing for mysql
 apiVersion: v1
 kind: PersistentVolumeClaim
@@ -338,6 +344,7 @@ attached to a given pod / set of pods, so let's attach them !
 
 To do that we need to modify our deployments by adding `volumes` and `volumeMounts` to our config:
 ```yaml
+# mysql-deployment.yaml
 apiVersion: apps/v1
 kind: Deployment
 metadata:
@@ -388,6 +395,7 @@ spec:
 Same thing should be done for wordpress: 
 
 ```yaml
+# wordpress-deployment.yaml
 apiVersion: apps/v1
 kind: Deployment
 metadata:
@@ -456,12 +464,12 @@ In kubernetes, secrets are by default using a `base64` encoding to make sure the
 We can create the secret with kubectl and, as we did with our volumes, bind it inside our deployments:
 
 ```shell
-# Create a secret with a new password
-kubectl create secret generic mysql-pass --from-literal=password='password234'
+# Create a mysql-secret YAML file with a new password
+kubectl create secret generic mysql-pass --from-literal=password='password234' -o yaml --dry-run=client > mysql-secret.yaml
 ```
 
 ```yaml
-# mysql/deployment.yqml
+# # mysql-deployment.yaml
 apiVersion: apps/v1
 kind: Deployment
 metadata:
@@ -512,6 +520,7 @@ spec:
 ```
 
 ```yaml
+# wordpress-deployment.yaml
 apiVersion: apps/v1
 kind: Deployment
 metadata:
@@ -558,7 +567,7 @@ spec:
 ```
 To make it work we need to delete the existing mysql `Deployment` and `PVC` and reapply them from 0 (since we changed the password). Then the only thing to do is to re-apply the deployments and the app should still work but now more secure ! 
 
-```shell
+```sh
  kubectl delete pvc mysql-pv-claim
  kubectl delete deploy wordpress-mysql
  kubectl apply -f mysql/pvc.yaml -f mysql/deployment.yaml -f wordpress/deployment.yaml
@@ -572,7 +581,7 @@ While `Secrets` are great for sensitive data like passwords, `ConfigMaps` are pe
 Let's move our database configuration to a `ConfigMap`:
 
 ```yaml
-# configmap.yaml
+# mysql-configmap.yaml
 apiVersion: v1
 kind: ConfigMap
 metadata:
@@ -595,9 +604,9 @@ data:
 Now update our deployments to use the `ConfigMap`:
 
 ```yaml
-# mysql/deployment.yaml or mysql/statefulset.yaml
+# mysql-deployment.yaml
 apiVersion: apps/v1
-kind: Deployment  # or StatefulSet
+kind: Deployment
 metadata:
   name: wordpress-mysql
   labels:
@@ -665,15 +674,6 @@ kubectl rollout restart deployment wordpress-mysql
 **Alternative ways to use ConfigMaps:**
 
 ```yaml
-# Mount as files
-volumeMounts:
-  - name: config-volume
-    mountPath: /etc/config
-volumes:
-  - name: config-volume
-    configMap:
-      name: wordpress-config
-
 # Use individual keys as env vars
 env:
   - name: WORDPRESS_DB_HOST
@@ -694,7 +694,7 @@ So far we used a `Deployment` for MySQL. For stateful workloads like databases, 
 For a single-node MySQL suitable for this tutorial, you can switch to a `StatefulSet` with a headless `Service`:
 
 ```yaml
-# mysql/service.yaml (headless service required by StatefulSet)
+# mysql-headless-service.yaml (headless service required by StatefulSet)
 apiVersion: v1
 kind: Service
 metadata:
@@ -712,7 +712,7 @@ spec:
 ```
 
 ```yaml
-# mysql/statefulset.yaml
+# mysql-statefulset.yaml (will replace the deployment)
 apiVersion: apps/v1
 kind: StatefulSet
 metadata:
@@ -783,8 +783,8 @@ Notes:
 Apply it like this:
 
 ```shell
-kubectl delete deploy wordpress-mysql || true
-kubectl apply -f mysql/service.yaml -f mysql/statefulset.yaml
+kubectl delete deploy wordpress-mysql
+kubectl apply -f mysql-headless-service.yaml -f mysql-statefulset.yaml
 ```
 
 ### Ingress
@@ -850,7 +850,7 @@ This creates a `wp/` directory. We will: (1) add Bitnami MySQL as a dependency, 
 Add MySQL dependency:
 
 ```yaml
-# wp/Chart.yaml
+# wordpress/Chart.yaml
 apiVersion: v2
 name: wp
 description: WordPress with MySQL (Bitnami) demo
@@ -866,7 +866,7 @@ dependencies:
 Configure values for both WordPress and MySQL:
 
 ```yaml
-# wp/values.yaml
+# wordpress/values.yaml
 wordpress:
   image: wordpress:latest
   service:
@@ -901,7 +901,7 @@ mysql:
 Create minimal WordPress templates using the values above (example skeletons):
 
 ```yaml
-# wp/templates/deployment.yaml
+# wordpress/templates/deployment.yaml
 apiVersion: apps/v1
 kind: Deployment
 metadata:
