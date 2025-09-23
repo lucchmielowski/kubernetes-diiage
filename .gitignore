@@ -1,3 +1,4 @@
 .idea
 wp/*
 manifests/*
+charts/wordpress/charts

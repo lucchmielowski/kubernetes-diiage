@@ -796,6 +796,11 @@ Let's give them access to our wordpress pod.
 This is done by using an `Ingress` object. Ingresses are pods running in your cluster that are forwarding traffic from the outside thanks to a "special" type of `Service`
 (either `NodePort` in kind's case or `LoadBalancer` when in the cloud)
 
+![node_port](./docs/images/node_port.png)
+![ingress](./docs/images/ingress.png)
+![load balancer](./docs/images/load_balancer.png)
+
+
 Ingresses controllers (the tool that's handling ingresses creation) are `addons` that need to be added to a cluster by the operators, we have to install one first ! The most common one is 
 `NGINX` (but [a lot of solutions](https://kubernetes.io/docs/concepts/services-networking/ingress-controllers/) exists )
 
@@ -829,11 +834,13 @@ You should now be able to access your application from outside the cluster ! ðŸŽ
 
 ![congratulations](https://media.giphy.com/media/jJQC2puVZpTMO4vUs0/giphy.gif)
 
-### Helm: create a chart and add MySQL as a dependency
+### BONUS: Helm: create a chart and add MySQL as a dependency
+
+Helm is like the "npm" or "brew" for Kubernetes: it lets you package, reuse, and share your app configs as charts. Instead of copy-pasting and tweaking raw YAML, you can use Helm to manage versions, dependencies, and configuration in a much cleaner wayâ€”super handy as things get more complex!
 
 Helm lets you templatize and version your manifests. We'll create a tiny chart for WordPress and pull in MySQL from a maintained chart.
 
-Prereqs: install Helm from the official docs.
+**Prereqs: install Helm from the [official docs](https://helm.sh/docs/intro/install/).**
 
 ```shell
 brew install helm # macOS
@@ -842,21 +849,22 @@ brew install helm # macOS
 Create a chart skeleton:
 
 ```shell
-helm create wp
+helm create wordpress
 ```
 
-This creates a `wp/` directory. We will: (1) add Bitnami MySQL as a dependency, and (2) keep a minimal WordPress `Deployment` and `Service` template using values.
+This creates a `wordpress/` directory. We will: (1) add Bitnami MySQL as a dependency, and (2) keep a minimal WordPress `Deployment` and `Service` template using values.
 
 Add MySQL dependency:
 
 ```yaml
 # wordpress/Chart.yaml
 apiVersion: v2
-name: wp
+name: wordpress
 description: WordPress with MySQL (Bitnami) demo
 type: application
 version: 0.1.0
 appVersion: "1.0.0"
+# Add these lines:
 dependencies:
   - name: mysql
     version: 9.x.x
@@ -898,12 +906,44 @@ mysql:
       size: 20Gi
 ```
 
-Create minimal WordPress templates using the values above (example skeletons):
+### Add Templating
+
+First let's remove the chart's generated templates (in a real project, you would keep 
+those, and configure via the values)
+
+```sh
+# Remove all existing templates
+rm -rf wordpress/templates/*
+```
+
+Let's create minimal WordPress templates using the values above (example skeletons):
+
+```yaml
+# wordpress/templates/_helpers.tpl
+# Those are reusable templates that will be used in all yaml files
+{{/*
+Expand the name of the chart.
+*/}}
+{{- define "wp.name" -}}
+{{- default .Chart.Name .Values.nameOverride | trunc 63 | trimSuffix "-" -}}
+{{- end -}}
+
+{{/*
+Create a default fully qualified app name.
+*/}}
+{{- define "wp.fullname" -}}
+{{- if .Values.fullnameOverride }}
+{{- .Values.fullnameOverride | trunc 63 | trimSuffix "-" -}}
+{{- else -}}
+{{- $name := default .Chart.Name .Values.nameOverride -}}
+{{- printf "%s" $name | trunc 63 | trimSuffix "-" -}}
+{{- end -}}
+{{- end -}}
+```
 
 ```yaml
 # wordpress/templates/deployment.yaml
-apiVersion: apps/v1
-kind: Deployment
+ind: Deployment
 metadata:
   name: {{ include "wp.fullname" . }}
   labels:
@@ -928,8 +968,8 @@ spec:
             - name: WORDPRESS_DB_PASSWORD
               valueFrom:
                 secretKeyRef:
-                  name: {{ .Values.wordpress.db.passwordSecretName | quote }}
-                  key: password
+                  name: {{ include "wp.fullname" . }}-mysql
+                  key: mysql-password
             - name: WORDPRESS_DB_NAME
               value: {{ .Values.mysql.auth.database | quote }}
           ports:
@@ -1026,3 +1066,8 @@ Notes:
 - The Bitnami MySQL chart creates a Service named `RELEASE-NAME-mysql` by default, hence `WORDPRESS_DB_HOST` uses `{{ .Release.Name }}-mysql`.
 - For production, avoid plain-text passwords; consider External Secrets/Sealed Secrets and set `mysql.auth.existingSecret`.
 - You can add an Ingress template to the chart, or reuse the earlier `Ingress` manifest with `ingressClassName: nginx`.
+
+
+### Image credits
+
+NodePort / Ingress / LoadBalancer : Matthew Palmer (https://matthewpalmer.net)
